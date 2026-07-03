@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TezGo — Admin</title>
+<style>
+  :root{--brand:#FFC400;--ink:#151A24;--muted:#8A93A8;--line:#E9ECF1;--bg:#F5F7FA;--accent:#22D3EE;--green:#2BB673;--red:#F0553B;}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+  a{color:inherit}
+  /* login */
+  #login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--ink)}
+  #login .card{background:#fff;border-radius:18px;padding:28px;width:320px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6)}
+  #login h1{font-size:1.3rem;margin-bottom:4px}#login .sub{color:var(--muted);font-size:.85rem;margin-bottom:18px}
+  #login input{width:100%;border:1.5px solid var(--line);border-radius:11px;padding:12px;margin-bottom:10px;font-size:.95rem}
+  #login button{width:100%;background:var(--brand);border:0;border-radius:11px;padding:13px;font-weight:800;font-size:1rem;cursor:pointer}
+  #login .err{color:var(--red);font-size:.82rem;margin-top:8px;min-height:18px}
+  .brandmark{display:inline-flex;align-items:center;gap:8px;margin-bottom:14px}
+  .brandmark b{color:#111}.brandmark .made{font-size:.6rem;color:var(--muted)}
+  /* app */
+  #app{display:none;grid-template-columns:220px 1fr;min-height:100vh}
+  .side{background:var(--ink);color:#cfd6e4;padding:18px 12px;position:sticky;top:0;height:100vh}
+  .side .logo{color:#fff;font-weight:800;font-size:1.15rem;padding:6px 10px 16px}
+  .side .logo b{color:var(--brand)}
+  .side .made{font-size:.58rem;color:#6b7590;padding:0 10px 16px}
+  .nav a{display:block;padding:10px 12px;border-radius:10px;font-size:.92rem;color:#cfd6e4;cursor:pointer;text-decoration:none;margin-bottom:2px}
+  .nav a:hover{background:#20283a}.nav a.on{background:var(--brand);color:#151A24;font-weight:700}
+  .side .out{position:absolute;bottom:16px;left:12px;right:12px;font-size:.82rem;color:#8a97ac;cursor:pointer;padding:8px 12px}
+  main{padding:22px 26px}
+  .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+  .head h2{font-size:1.35rem}
+  .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:8px}
+  .stat{background:#fff;border-radius:14px;padding:16px;border:1px solid var(--line)}
+  .stat .n{font-size:1.8rem;font-weight:800}.stat .l{color:var(--muted);font-size:.8rem;margin-top:2px}
+  table{width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+  th,td{text-align:left;padding:10px 12px;font-size:.86rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#fafbfc;color:var(--muted);font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em}
+  tr:last-child td{border-bottom:0}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.72rem;font-weight:700}
+  .pill.pending{background:#FFF3D6;color:#8a6d00}.pill.accepted,.pill.enroute,.pill.arrived{background:#E1F4FF;color:#0b6ea8}
+  .pill.completed,.pill.approved{background:#E2F7EC;color:#1a7a4d}.pill.cancelled,.pill.rejected,.pill.blocked{background:#FDE4DF;color:#a83322}
+  .btn{border:0;border-radius:9px;padding:7px 12px;font-weight:700;font-size:.8rem;cursor:pointer}
+  .btn.g{background:var(--green);color:#fff}.btn.r{background:var(--red);color:#fff}.btn.k{background:#eef1f5}
+  .muted{color:var(--muted)}
+  .empty{padding:30px;text-align:center;color:var(--muted)}
+  .link{color:#0b6ea8;cursor:pointer;text-decoration:underline}
+  /* chat modal */
+  .modal{position:fixed;inset:0;background:rgba(10,14,22,.55);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal .box{background:#fff;border-radius:16px;width:min(560px,94vw);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal .top{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .modal .msgs{padding:14px;overflow:auto;background:#f5f7fa;flex:1}
+  .m{margin-bottom:10px;max-width:78%}
+  .m.customer{margin-right:auto}.m.driver{margin-left:auto;text-align:right}
+  .m .b{display:inline-block;padding:8px 12px;border-radius:12px;font-size:.88rem;background:#fff;border:1px solid var(--line)}
+  .m.driver .b{background:#FFF7DA}
+  .m .who{font-size:.66rem;color:var(--muted);margin-bottom:2px}
+  .m img{max-width:200px;border-radius:10px;display:block}
+  .x{cursor:pointer;color:var(--muted);font-size:1.2rem}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="card">
+    <div class="brandmark"><span style="font-size:1.4rem;font-weight:800">Tez<b>Go</b></span><span class="made">Admin</span></div>
+    <h1>Kirish</h1><div class="sub">Boshqaruv paneli</div>
+    <input id="u" placeholder="Login" autocomplete="username">
+    <input id="p" type="password" placeholder="Parol" autocomplete="current-password">
+    <button onclick="doLogin()">Kirish</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<div id="app">
+  <aside class="side">
+    <div class="logo">Tez<b>Go</b></div>
+    <div class="made">Made by CoreStack Labs</div>
+    <nav class="nav" id="nav">
+      <a data-v="dashboard" class="on">📊 Boshqaruv</a>
+      <a data-v="orders">🚕 Buyurtmalar</a>
+      <a data-v="applications">📝 Arizalar</a>
+      <a data-v="drivers">🧑‍✈️ Haydovchilar</a>
+      <a data-v="customers">👥 Mijozlar</a>
+    </nav>
+    <div class="out" onclick="logout()">↩ Chiqish</div>
+  </aside>
+  <main>
+    <div class="head"><h2 id="title">Boshqaruv</h2><button class="btn k" onclick="render()">↻ Yangilash</button></div>
+    <div id="content"></div>
+  </main>
+</div>
+
+<div class="modal" id="chatModal">
+  <div class="box">
+    <div class="top"><b>Buyurtma chati — <span id="chatCode"></span></b><span class="x" onclick="closeChat()">✕</span></div>
+    <div class="msgs" id="chatMsgs"></div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let token = "";
+let view = "dashboard";
+
+function h(s){return (s??"").toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function dt(s){ if(!s) return "—"; const d=new Date(s); return d.toLocaleString('uz-UZ',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
+function pill(s){return `<span class="pill ${h(s)}">${h(s)}</span>`;}
+
+async function api(path, opts={}){
+  const r = await fetch(API+path, {...opts, headers:{...(opts.headers||{}), "Authorization":"Bearer "+token, "Content-Type":"application/json"}});
+  if(r.status===401){ logout(); throw new Error("unauth"); }
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+async function doLogin(){
+  const u=document.getElementById('u').value, p=document.getElementById('p').value;
+  const el=document.getElementById('loginErr'); el.textContent="";
+  try{
+    const r=await fetch(API+"/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});
+    if(!r.ok){ el.textContent = (await r.json()).detail || "Xatolik"; return; }
+    const d=await r.json(); token=d.token;
+    document.getElementById('login').style.display="none";
+    document.getElementById('app').style.display="grid";
+    render();
+  }catch(e){ el.textContent="Ulanish xatosi"; }
+}
+function logout(){ token=""; document.getElementById('app').style.display="none"; document.getElementById('login').style.display="flex"; }
+
+document.getElementById('nav').addEventListener('click', e=>{
+  const a=e.target.closest('a'); if(!a) return;
+  document.querySelectorAll('#nav a').forEach(x=>x.classList.remove('on'));
+  a.classList.add('on'); view=a.dataset.v; render();
+});
+document.getElementById('p').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+
+const TITLES={dashboard:"Boshqaruv",orders:"Buyurtmalar",applications:"Haydovchi arizalari",drivers:"Haydovchilar",customers:"Mijozlar"};
+
+async function render(){
+  document.getElementById('title').textContent=TITLES[view];
+  const c=document.getElementById('content'); c.innerHTML="<div class='empty'>Yuklanmoqda…</div>";
+  try{
+    if(view==="dashboard") return renderDashboard(c);
+    if(view==="orders") return renderOrders(c);
+    if(view==="applications") return renderApplications(c);
+    if(view==="drivers") return renderDrivers(c);
+    if(view==="customers") return renderCustomers(c);
+  }catch(e){ c.innerHTML="<div class='empty'>Xatolik: "+h(e.message)+"</div>"; }
+}
+
+async function renderDashboard(c){
+  const s=await api("/api/stats");
+  const cards=[["Jami buyurtma",s.orders_total],["Faol",s.orders_active],["Yakunlangan",s.orders_completed],
+    ["Mijozlar",s.customers],["Tasdiqlangan haydovchi",s.drivers_approved],["Kutayotgan arizalar",s.drivers_pending],["Chat xabarlari",s.messages]];
+  c.innerHTML=`<div class="stats">${cards.map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("")}</div>`;
+}
+
+async function renderOrders(c){
+  const rows=await api("/api/orders?limit=200");
+  if(!rows.length){ c.innerHTML="<div class='empty'>Buyurtmalar yo'q</div>"; return; }
+  c.innerHTML=`<table><thead><tr><th>Kod</th><th>Mijoz</th><th>Haydovchi</th><th>Yo'nalish</th><th>Narx</th><th>Holat</th><th>Vaqt</th><th>Chat</th></tr></thead>
+    <tbody>${rows.map(o=>`<tr>
+      <td><b>${h(o.code)}</b></td><td>${h(o.customer_name)||'—'}</td><td>${h(o.driver_name)||'—'}</td>
+      <td>${h(o.pickup_address)||'—'} → ${h(o.dest_address)||'—'}</td>
+      <td>${o.fare_som?o.fare_som.toLocaleString('ru-RU'):'—'}</td>
+      <td>${pill(o.status)}</td><td class="muted">${dt(o.created_at)}</td>
+      <td><span class="link" onclick="openChat('${h(o.code)}')">ko'rish</span></td></tr>`).join("")}</tbody></table>`;
+}
+
+async function renderApplications(c){
+  const rows=await api("/api/applications");
+  if(!rows.length){ c.innerHTML="<div class='empty'>Yangi arizalar yo'q</div>"; return; }
+  c.innerHTML=`<table><thead><tr><th>F.I.O</th><th>Telefon</th><th>Mashina</th><th>Raqam</th><th>Hujjatlar</th><th>Amal</th></tr></thead>
+    <tbody>${rows.map(d=>`<tr>
+      <td><b>${h(d.full_name)||'—'}</b><div class="muted">${h(d.username)||''}</div></td>
+      <td>${h(d.phone)||'—'}</td><td>${h(d.car_make)||'—'} ${h(d.car_color)||''}</td><td>${h(d.car_plate)||'—'}</td>
+      <td class="muted">guvohnoma, texpassport, litsenziya, mashina fotolari</td>
+      <td><button class="btn g" onclick="approve(${d.id})">✅ Tasdiqlash</button>
+          <button class="btn r" onclick="reject(${d.id})">❌ Rad</button></td></tr>`).join("")}</tbody></table>`;
+}
+async function approve(id){ await api(`/api/drivers/${id}/approve`,{method:"POST"}); render(); }
+async function reject(id){ const r=prompt("Rad etish sababi:")||""; await api(`/api/drivers/${id}/reject`,{method:"POST",body:JSON.stringify({reason:r})}); render(); }
+
+async function renderDrivers(c){
+  const rows=await api("/api/drivers");
+  if(!rows.length){ c.innerHTML="<div class='empty'>Haydovchilar yo'q</div>"; return; }
+  c.innerHTML=`<table><thead><tr><th>F.I.O</th><th>Telefon</th><th>Mashina</th><th>Reyting</th><th>Safar</th><th>Holat</th></tr></thead>
+    <tbody>${rows.map(d=>`<tr><td><b>${h(d.full_name)||'—'}</b></td><td>${h(d.phone)||'—'}</td>
+      <td>${h(d.car_make)||'—'} ${h(d.car_plate)||''}</td><td>${d.rating_avg||0}⭐</td><td>${d.rides_done||0}</td>
+      <td>${pill(d.status)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+async function renderCustomers(c){
+  const rows=await api("/api/customers");
+  if(!rows.length){ c.innerHTML="<div class='empty'>Mijozlar yo'q</div>"; return; }
+  c.innerHTML=`<table><thead><tr><th>Ism</th><th>Username</th><th>Ro'yxatdan o'tgan</th></tr></thead>
+    <tbody>${rows.map(u=>`<tr><td><b>${h(u.name)||'—'}</b></td><td>${h(u.username)||'—'}</td><td class="muted">${dt(u.created_at)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+async function openChat(code){
+  document.getElementById('chatCode').textContent=code;
+  document.getElementById('chatModal').style.display="flex";
+  const box=document.getElementById('chatMsgs'); box.innerHTML="Yuklanmoqda…";
+  const msgs=await api(`/api/orders/${code}/messages`);
+  if(!msgs.length){ box.innerHTML="<div class='empty'>Bu buyurtmada chat yo'q</div>"; return; }
+  box.innerHTML=msgs.map(m=>`<div class="m ${h(m.sender_role)}"><div class="who">${m.sender_role==='driver'?'Haydovchi':'Mijoz'} · ${dt(m.created_at)}</div>
+    <div class="b">${m.type==='image'?`<img src="${h(m.image_url)}">`:h(m.body)}</div></div>`).join("");
+  box.scrollTop=box.scrollHeight;
+}
+function closeChat(){ document.getElementById('chatModal').style.display="none"; }
+</script>
+</body>
+</html>
