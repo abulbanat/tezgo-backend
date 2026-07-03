@@ -46,7 +46,8 @@ ADMIN_USER = os.environ.get("ADMIN_USER", "admin").strip()
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "").strip()
 JWT_SECRET = os.environ.get("JWT_SECRET", "").strip() or secrets.token_hex(32)
 CHAT_SECRET = os.environ.get("CHAT_SECRET", "").strip() or JWT_SECRET
-DRIVER_BOT_TOKEN = os.environ.get("DRIVER_BOT_TOKEN", "").strip()  # to fetch driver document photos
+DRIVER_BOT_TOKEN = os.environ.get("DRIVER_BOT_TOKEN", "").strip()  # driver bot: photos, dispatch, notify drivers
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()                # customer bot: notify customers
 HERE = Path(__file__).parent
 
 pool: asyncpg.Pool | None = None
@@ -416,6 +417,120 @@ async def ws_chat(ws: WebSocket, code: str, role: str, t: str):
         pass
     finally:
         _sockets.get(code, set()).discard(ws)
+
+
+# --------------------------------------------------------------------------- #
+# Orders: create (from customer bot) + dispatch to online drivers + accept
+# --------------------------------------------------------------------------- #
+import random
+import string
+
+CAR_LABELS = {"economy": "Ekonom", "comfort": "Komfort", "business": "Biznes"}
+
+
+def gen_code() -> str:
+    return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+
+def fmt_som(n) -> str:
+    try:
+        return f"{int(round(float(n))):,}".replace(",", " ")
+    except Exception:
+        return str(n)
+
+
+async def tg_send(token: str, chat_id, text: str, reply_markup: dict | None = None):
+    if not token or not chat_id:
+        return
+    body = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        body["reply_markup"] = reply_markup
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(f"https://api.telegram.org/bot{token}/sendMessage", json=body)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("tg_send failed: %s", exc)
+
+
+def render_order_for_driver(code: str, o: dict) -> str:
+    cls = CAR_LABELS.get(o.get("class"), o.get("class") or "")
+    return (
+        f"🆕 Yangi buyurtma — {code}\n\n"
+        f"📍 Qayerdan: {o['pickup'].get('address', '')}\n"
+        f"🏁 Qayerga: {o['destination'].get('address', '')}\n"
+        f"🚘 Sinf: {cls}\n"
+        f"📏 {float(o.get('distance_km', 0)):.1f} km · ⏱ ~{int(o.get('duration_min', 0))} daq\n"
+        f"💰 {fmt_som(o.get('fare_som', 0))} so'm"
+    )
+
+
+@app.post("/api/orders")
+async def create_order(payload: dict):
+    """Called by the customer bot when a rider confirms an order.
+    Stores the order and dispatches it to online approved drivers."""
+    cust = payload.get("customer") or {}
+    p = payload.get("pickup") or {}
+    d = payload.get("destination") or {}
+    code = gen_code()
+    async with pool.acquire() as con:
+        crow = await con.fetchrow(
+            "INSERT INTO customers(telegram_id,name,username) VALUES($1,$2,$3) "
+            "ON CONFLICT (telegram_id) DO UPDATE SET name=EXCLUDED.name, username=EXCLUDED.username "
+            "RETURNING id", cust.get("telegram_id"), cust.get("name"), cust.get("username"))
+        await con.execute(
+            "INSERT INTO orders(code,customer_id,pickup_lat,pickup_lon,pickup_address,"
+            "dest_lat,dest_lon,dest_address,car_class,distance_km,duration_min,fare_som,status) "
+            "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')",
+            code, crow["id"], p.get("lat"), p.get("lon"), p.get("address"),
+            d.get("lat"), d.get("lon"), d.get("address"), payload.get("class"),
+            payload.get("distance_km"), payload.get("duration_min"), payload.get("fare_som"))
+        drivers = await con.fetch(
+            "SELECT telegram_id FROM drivers WHERE status='approved' AND is_online=true")
+    text = render_order_for_driver(code, {"pickup": p, "destination": d, **payload})
+    kb = {"inline_keyboard": [[{"text": "🚕 Qabul qilish", "callback_data": f"accept:{code}"}]]}
+    for dr in drivers:
+        await tg_send(DRIVER_BOT_TOKEN, dr["telegram_id"], text, kb)
+        await _send_location(DRIVER_BOT_TOKEN, dr["telegram_id"], p.get("lat"), p.get("lon"))
+    return {"ok": True, "code": code, "drivers_notified": len(drivers)}
+
+
+async def _send_location(token, chat_id, lat, lon):
+    if not (token and chat_id and lat and lon):
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(f"https://api.telegram.org/bot{token}/sendLocation",
+                         json={"chat_id": chat_id, "latitude": lat, "longitude": lon})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.post("/api/orders/{code}/accept")
+async def accept_order_api(code: str, payload: dict):
+    """Called by the driver bot when a driver taps 'Qabul qilish'. First-come wins."""
+    driver_tg = payload.get("driver_telegram_id")
+    async with pool.acquire() as con:
+        order = await con.fetchrow(
+            "SELECT o.id, o.status, c.telegram_id AS cust_tg FROM orders o "
+            "JOIN customers c ON c.id=o.customer_id WHERE o.code=$1", code)
+        if not order:
+            return {"ok": False, "error": "notfound"}
+        if order["status"] != "pending":
+            return {"ok": False, "error": "taken"}
+        drv = await con.fetchrow(
+            "SELECT id, full_name, phone, car_make, car_color, car_plate "
+            "FROM drivers WHERE telegram_id=$1 AND status='approved'", driver_tg)
+        if not drv:
+            return {"ok": False, "error": "not_driver"}
+        await con.execute(
+            "UPDATE orders SET driver_id=$2, status='accepted', accepted_at=now() WHERE id=$1",
+            order["id"], drv["id"])
+    car = f"{drv['car_make'] or ''} {drv['car_color'] or ''} {drv['car_plate'] or ''}".strip()
+    await tg_send(BOT_TOKEN, order["cust_tg"],
+                  f"🚗 Buyurtmangizni haydovchi qabul qildi!\n"
+                  f"Haydovchi: {drv['full_name'] or ''}\nMashina: {car}\n"
+                  "Tez orada yetib boradi.")
+    return {"ok": True, "driver": {"name": drv["full_name"], "phone": drv["phone"], "car": car}}
 
 
 # --------------------------------------------------------------------------- #
