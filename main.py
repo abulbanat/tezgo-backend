@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import asyncpg
+import httpx
 import jwt
 from fastapi import (
     Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket,
@@ -45,6 +46,7 @@ ADMIN_USER = os.environ.get("ADMIN_USER", "admin").strip()
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "").strip()
 JWT_SECRET = os.environ.get("JWT_SECRET", "").strip() or secrets.token_hex(32)
 CHAT_SECRET = os.environ.get("CHAT_SECRET", "").strip() or JWT_SECRET
+DRIVER_BOT_TOKEN = os.environ.get("DRIVER_BOT_TOKEN", "").strip()  # to fetch driver document photos
 HERE = Path(__file__).parent
 
 pool: asyncpg.Pool | None = None
@@ -239,6 +241,39 @@ async def reject_driver(driver_id: int, payload: dict, admin: str = Depends(requ
             "UPDATE drivers SET status='rejected', reject_reason=$2 WHERE id=$1",
             driver_id, (payload or {}).get("reason", ""))
     return {"ok": True}
+
+
+_photo_cache: dict[str, bytes] = {}
+
+
+@app.get("/api/tg-photo/{file_id}")
+async def tg_photo(file_id: str):
+    """Fetch a driver's document photo from Telegram (by file_id) and serve it.
+    Used by the admin panel to review driver documents. file_ids are long and
+    unguessable, so they act as capability tokens for the images."""
+    if not DRIVER_BOT_TOKEN:
+        raise HTTPException(503, "DRIVER_BOT_TOKEN not configured on backend")
+    if file_id in _photo_cache:
+        return Response(content=_photo_cache[file_id], media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            meta = (await c.get(
+                f"https://api.telegram.org/bot{DRIVER_BOT_TOKEN}/getFile",
+                params={"file_id": file_id})).json()
+            if not meta.get("ok"):
+                raise HTTPException(404, "File not found")
+            path = meta["result"]["file_path"]
+            img = await c.get(f"https://api.telegram.org/file/bot{DRIVER_BOT_TOKEN}/{path}")
+            data = img.content
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Telegram fetch failed: {exc}")
+    if len(_photo_cache) < 200:
+        _photo_cache[file_id] = data
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 # --------------------------------------------------------------------------- #

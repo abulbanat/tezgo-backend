@@ -98,6 +98,13 @@
   </div>
 </div>
 
+<div class="modal" id="docsModal">
+  <div class="box">
+    <div class="top"><b>Hujjatlar — <span id="docsTitle"></span></b><span class="x" onclick="closeDocs()">✕</span></div>
+    <div class="msgs" id="docsBody"></div>
+  </div>
+</div>
+
 <script>
 const API = "";
 let token = "";
@@ -168,19 +175,40 @@ async function renderOrders(c){
       <td><span class="link" onclick="openChat('${h(o.code)}')">ko'rish</span></td></tr>`).join("")}</tbody></table>`;
 }
 
+const DOCS=[["license_front","Guvohnoma — old"],["license_back","Guvohnoma — orqa"],
+  ["techpass_front","Texpassport — old"],["techpass_back","Texpassport — orqa"],
+  ["taxi_license","Litsenziya"],["car_photo_front","Mashina — old"],["car_photo_back","Mashina — orqa"],
+  ["car_photo_left","Mashina — chap"],["car_photo_right","Mashina — o'ng"],["car_photo_interior","Salon"]];
+let _rowsCache={};
+
 async function renderApplications(c){
   const rows=await api("/api/applications");
   if(!rows.length){ c.innerHTML="<div class='empty'>Yangi arizalar yo'q</div>"; return; }
+  rows.forEach(d=>_rowsCache[d.id]=d);
   c.innerHTML=`<table><thead><tr><th>F.I.O</th><th>Telefon</th><th>Mashina</th><th>Raqam</th><th>Hujjatlar</th><th>Amal</th></tr></thead>
     <tbody>${rows.map(d=>`<tr>
       <td><b>${h(d.full_name)||'—'}</b><div class="muted">${h(d.username)||''}</div></td>
       <td>${h(d.phone)||'—'}</td><td>${h(d.car_make)||'—'} ${h(d.car_color)||''}</td><td>${h(d.car_plate)||'—'}</td>
-      <td class="muted">guvohnoma, texpassport, litsenziya, mashina fotolari</td>
+      <td><span class="link" onclick="openDocs(${d.id})">📎 Ko'rish</span></td>
       <td><button class="btn g" onclick="approve(${d.id})">✅ Tasdiqlash</button>
           <button class="btn r" onclick="reject(${d.id})">❌ Rad</button></td></tr>`).join("")}</tbody></table>`;
 }
 async function approve(id){ await api(`/api/drivers/${id}/approve`,{method:"POST"}); render(); }
 async function reject(id){ const r=prompt("Rad etish sababi:")||""; await api(`/api/drivers/${id}/reject`,{method:"POST",body:JSON.stringify({reason:r})}); render(); }
+
+function openDocs(id){
+  const d=_rowsCache[id]; if(!d) return;
+  document.getElementById('docsTitle').textContent=(d.full_name||('#'+id));
+  const box=document.getElementById('docsBody');
+  const items=DOCS.filter(([k])=>d[k]).map(([k,label])=>
+    `<div style="margin-bottom:14px"><div class="muted" style="margin-bottom:4px;font-size:.78rem">${label}</div>
+     <a href="/api/tg-photo/${h(d[k])}" target="_blank"><img src="/api/tg-photo/${h(d[k])}" loading="lazy" style="max-width:100%;border-radius:10px;border:1px solid var(--line)"></a></div>`).join("");
+  box.innerHTML=`<div style="margin-bottom:12px;font-size:.86rem"><b>${h(d.full_name)||''}</b> · ${h(d.phone)||''} · ${h(d.car_make)||''} ${h(d.car_color)||''} · ${h(d.car_plate)||''}</div>`
+    + (items || "<div class='empty'>Hujjat yuborilmagan</div>")
+    + `<div style="display:flex;gap:9px;margin-top:6px"><button class="btn g" onclick="approve(${id});closeDocs();">✅ Tasdiqlash</button><button class="btn r" onclick="reject(${id});closeDocs();">❌ Rad etish</button></div>`;
+  document.getElementById('docsModal').style.display="flex";
+}
+function closeDocs(){ document.getElementById('docsModal').style.display="none"; }
 
 async function renderDrivers(c){
   const rows=await api("/api/drivers");
