@@ -226,20 +226,48 @@ async def applications(_: str = Depends(require_admin)):
         return _rows(await con.fetch("SELECT * FROM drivers WHERE status='pending' ORDER BY created_at"))
 
 
+async def notify_driver(telegram_id, text: str):
+    """Send a Telegram message to a driver via the driver bot (best-effort)."""
+    if not DRIVER_BOT_TOKEN or not telegram_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(f"https://api.telegram.org/bot{DRIVER_BOT_TOKEN}/sendMessage",
+                         json={"chat_id": telegram_id, "text": text})
+    except Exception as exc:  # noqa: BLE001
+        log.warning("notify_driver failed: %s", exc)
+
+
 @app.post("/api/drivers/{driver_id}/approve")
 async def approve_driver(driver_id: int, admin: str = Depends(require_admin)):
     async with pool.acquire() as con:
-        await con.execute(
-            "UPDATE drivers SET status='approved', approved_at=now() WHERE id=$1", driver_id)
+        row = await con.fetchrow(
+            "UPDATE drivers SET status='approved', approved_at=now() WHERE id=$1 "
+            "RETURNING telegram_id", driver_id)
+    if row:
+        await notify_driver(
+            row["telegram_id"],
+            "✅ Tabriklaymiz! Arizangiz tasdiqlandi — endi TezGo haydovchisiz.\n\n"
+            "Buyurtma olishni boshlash uchun:\n"
+            "1) /selfie — bugungi selfi rasmingizni yuboring\n"
+            "2) /online — buyurtma qabul qilishni yoqing\n"
+            "/offline — buyurtma qabul qilishni to'xtatish")
     return {"ok": True}
 
 
 @app.post("/api/drivers/{driver_id}/reject")
 async def reject_driver(driver_id: int, payload: dict, admin: str = Depends(require_admin)):
+    reason = (payload or {}).get("reason", "")
     async with pool.acquire() as con:
-        await con.execute(
-            "UPDATE drivers SET status='rejected', reject_reason=$2 WHERE id=$1",
-            driver_id, (payload or {}).get("reason", ""))
+        row = await con.fetchrow(
+            "UPDATE drivers SET status='rejected', reject_reason=$2 WHERE id=$1 "
+            "RETURNING telegram_id", driver_id, reason)
+    if row:
+        await notify_driver(
+            row["telegram_id"],
+            "❌ Afsuski, arizangiz rad etildi.\n"
+            f"Sabab: {reason or 'ko`rsatilmagan'}\n\n"
+            "Ma'lumotlarni to'g'rilab, /reregister buyrug'i orqali qayta yuborishingiz mumkin.")
     return {"ok": True}
 
 
