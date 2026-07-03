@@ -94,18 +94,26 @@ async def lifespan(app: FastAPI):
     schema = (HERE / "schema.sql").read_text()
     async with pool.acquire() as con:
         await con.execute(schema)
-        # Seed / update the admin account.
-        global ADMIN_PASS
-        if not ADMIN_PASS:
-            ADMIN_PASS = secrets.token_urlsafe(9)
-            log.warning("ADMIN_PASS not set — generated one: %s (set ADMIN_PASS env to fix)", ADMIN_PASS)
+        # Seed / sync the admin account.
+        # If ADMIN_PASS is explicitly set, always sync it (create or update the
+        # password). Otherwise generate one only if the admin doesn't exist yet.
+        explicit = bool(os.environ.get("ADMIN_PASS", "").strip())
+        pw = ADMIN_PASS or secrets.token_urlsafe(9)
         row = await con.fetchrow("SELECT id FROM admins WHERE username=$1", ADMIN_USER)
         if row is None:
             await con.execute(
                 "INSERT INTO admins(username, password_hash, name) VALUES($1,$2,$3)",
-                ADMIN_USER, hash_password(ADMIN_PASS), "Owner",
+                ADMIN_USER, hash_password(pw), "Owner",
             )
             log.info("Seeded admin '%s'.", ADMIN_USER)
+            if not explicit:
+                log.warning("ADMIN_PASS not set — generated password: %s", pw)
+        elif explicit:
+            await con.execute(
+                "UPDATE admins SET password_hash=$2 WHERE username=$1",
+                ADMIN_USER, hash_password(ADMIN_PASS),
+            )
+            log.info("Synced admin '%s' password from ADMIN_PASS.", ADMIN_USER)
     log.info("TezGo backend ready.")
     yield
     await pool.close()
