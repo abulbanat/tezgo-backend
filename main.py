@@ -170,8 +170,11 @@ async def stats(_: str = Depends(require_admin)):
             "orders_active": await con.fetchval(
                 "SELECT count(*) FROM orders WHERE status IN ('pending','accepted','enroute','arrived')"),
             "orders_completed": await con.fetchval("SELECT count(*) FROM orders WHERE status='completed'"),
+            "orders_cancelled": await con.fetchval("SELECT count(*) FROM orders WHERE status='cancelled'"),
+            "revenue_som": await con.fetchval("SELECT COALESCE(SUM(fare_som),0) FROM orders WHERE status='completed'"),
             "customers": await con.fetchval("SELECT count(*) FROM customers"),
             "drivers_approved": await con.fetchval("SELECT count(*) FROM drivers WHERE status='approved'"),
+            "drivers_online": await con.fetchval("SELECT count(*) FROM drivers WHERE status='approved' AND is_online=true"),
             "drivers_pending": await con.fetchval("SELECT count(*) FROM drivers WHERE status='pending'"),
             "messages": await con.fetchval("SELECT count(*) FROM messages"),
         }
@@ -269,6 +272,53 @@ async def reject_driver(driver_id: int, payload: dict, admin: str = Depends(requ
             "❌ Afsuski, arizangiz rad etildi.\n"
             f"Sabab: {reason or 'ko`rsatilmagan'}\n\n"
             "Ma'lumotlarni to'g'rilab, /reregister buyrug'i orqali qayta yuborishingiz mumkin.")
+    return {"ok": True}
+
+
+@app.post("/api/drivers/{driver_id}/block")
+async def block_driver(driver_id: int, admin: str = Depends(require_admin)):
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "UPDATE drivers SET status='blocked', is_online=false WHERE id=$1 RETURNING telegram_id",
+            driver_id)
+    if row:
+        await notify_driver(row["telegram_id"], "⛔️ Hisobingiz bloklandi. Batafsil ma'lumot uchun admin bilan bog'laning.")
+    return {"ok": True}
+
+
+@app.post("/api/drivers/{driver_id}/unblock")
+async def unblock_driver(driver_id: int, admin: str = Depends(require_admin)):
+    async with pool.acquire() as con:
+        row = await con.fetchrow(
+            "UPDATE drivers SET status='approved', reject_reason=NULL WHERE id=$1 RETURNING telegram_id",
+            driver_id)
+    if row:
+        await notify_driver(row["telegram_id"], "✅ Hisobingiz qayta faollashtirildi. /selfie va /online bilan davom eting.")
+    return {"ok": True}
+
+
+@app.post("/api/drivers/{driver_id}/offline")
+async def force_offline(driver_id: int, admin: str = Depends(require_admin)):
+    async with pool.acquire() as con:
+        await con.execute("UPDATE drivers SET is_online=false WHERE id=$1", driver_id)
+    return {"ok": True}
+
+
+@app.post("/api/orders/{code}/cancel")
+async def admin_cancel_order(code: str, admin: str = Depends(require_admin)):
+    async with pool.acquire() as con:
+        order = await con.fetchrow(
+            "SELECT o.id, o.status, o.driver_id, c.telegram_id AS cust_tg FROM orders o "
+            "JOIN customers c ON c.id=o.customer_id WHERE o.code=$1", code)
+        if not order:
+            return {"ok": False, "error": "notfound"}
+        await con.execute("UPDATE orders SET status='cancelled', cancelled_by='admin' WHERE id=$1", order["id"])
+        drv_tg = None
+        if order["driver_id"]:
+            drv_tg = await con.fetchval("SELECT telegram_id FROM drivers WHERE id=$1", order["driver_id"])
+    await tg_send(BOT_TOKEN, order["cust_tg"], f"⚠️ Buyurtmangiz {code} operator tomonidan bekor qilindi.")
+    if drv_tg:
+        await tg_send(DRIVER_BOT_TOKEN, drv_tg, f"⚠️ {code} buyurtma operator tomonidan bekor qilindi.")
     return {"ok": True}
 
 
